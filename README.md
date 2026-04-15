@@ -7,4 +7,51 @@ This repository contains the implementation of the H-Neuron On the Existence pap
 `The original idea is that we humans also hallucinate, but we have a mechanism to detect and correct these hallucinations. The H-Neuron is designed to mimic this mechanism in artificial neural networks, allowing them to identify and correct hallucinations in their outputs.`
 
 Currently the implementation focuses on detecting hallucinations.
+
+Results:
+```Q: Which American-born Sinclair won the Nobel Prize for Literature in 1930?
+  A: Orwell
+───────────────────────────────────────────────────────
+  ⚠  HALLUCINATION WARNING  [HIGH]
+     Probability: 1.000  (threshold: 0.5)
+───────────────────────────────────────────────────────
+
+
+───────────────────────────────────────────────────────
+  Q: Where in England was Dame Judi Dench born?
+  A: London
+───────────────────────────────────────────────────────
+  ⚠  HALLUCINATION WARNING  [HIGH]
+     Probability: 0.996  (threshold: 0.5)
+───────────────────────────────────────────────────────
+
+
+───────────────────────────────────────────────────────
+  Q: From which country did Angola achieve independence in 1975?
+  A: Angola achieved independence from Portugal in 1975.
+───────────────────────────────────────────────────────
+  ✓  Response looks faithful
+     Hallucination probability: 0.003
+───────────────────────────────────────────────────────
+
+
+───────────────────────────────────────────────────────
+  Q: Who wrote the play Hamlet?
+  A: William Shakespeare
+───────────────────────────────────────────────────────
+  ✓  Response looks faithful
+     Hallucination probability: 0.000
+───────────────────────────────────────────────────────
+
+
+───────────────────────────────────────────────────────
+  Q: What is the capital of Australia?
+  A: Canberra
+───────────────────────────────────────────────────────
+  ✓  Response looks faithful
+     Hallucination probability: 0.000
+───────────────────────────────────────────────────────
+```
+
+
 Next implementation will focus on correcting hallucinations if required. The model will go into a state of reflection and self-correction when it detects a hallucination, allowing it to improve its performance over time.
