@@ -258,3 +258,18 @@ How do you use the JavaScript method array.flattenDeep       2    0.861    0.978
 ```
 
 Next implementation will focus on correcting hallucinations if required. The model will go into a state of reflection and self-correction when it detects a hallucination, allowing it to improve its performance over time.
+
+This is just a POC.
+
+But it feels like a step toward something bigger:
+
+LLMs with internal self-awareness signals.
+
+Curious to hear thoughts from people working on:
+
+interpretability
+
+alignment
+
+LLM reliability
+
