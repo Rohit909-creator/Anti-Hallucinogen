@@ -9,6 +9,8 @@ This repository contains the implementation of the H-Neuron On the Existence pap
 Currently the implementation focuses on detecting hallucinations and reflecting on them in realtime.
 This has been tested on LLaMA-3.1-1B-Instruct and LLaMA-3.1-8B-Instruct models. The results are good enought for a POC, showing that the H-Neuron can effectively detect hallucinations and provide feedback to the model for self-reflection and reconsider its responses.
 
+- for trying this out get to the lib folder and execute the step1, step2... files in `/scripts`. Refer the Readme.md there for more details.
+
 Results on the Detector:
 ```Q: Which American-born Sinclair won the Nobel Prize for Literature in 1930?
   A: Orwell
