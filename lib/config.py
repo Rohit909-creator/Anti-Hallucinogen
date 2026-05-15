@@ -4,7 +4,16 @@ config.py — All tunable knobs in one place.
 Edit this file before running any pipeline step.
 """
 
+import os
 import torch
+
+# All data/model paths are anchored to the directory this file lives in,
+# so the pipeline works regardless of the working directory it's invoked from.
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+def _p(*parts: str) -> str:
+    """Return an absolute path inside the project root."""
+    return os.path.join(PROJECT_ROOT, *parts)
 
 # ──────────────────────────────────────────────────────────────
 # Model
@@ -16,6 +25,12 @@ MODEL_PATH = "meta-llama/Llama-3.1-8B-Instruct"
 # "float16" is the best default for most consumer/cloud GPUs.
 # Use "bfloat16" for Ampere/Ada GPUs (A100, H100, RTX 4090).
 DTYPE = "float16"   # "float16" | "bfloat16" | "float32"
+
+DTYPE_MAP = {
+    "float16":  torch.float16,
+    "bfloat16": torch.bfloat16,
+    "float32":  torch.float32,
+}
 
 # ──────────────────────────────────────────────────────────────
 # Model Architecture Config
@@ -54,7 +69,13 @@ FFN_PATH    = "mlp.down_proj"  # dotted path from each layer to the FFN module t
 # Step 1 — Data Collection
 # ──────────────────────────────────────────────────────────────
 
-OUTPUT_PATH     = "data/consistency_samples.jsonl"
+# Source dataset: HaluEval QA subset
+# Available subsets: "qa_samples", "summarization_samples", "dialogue_samples"
+DATASET_NAME   = "pminervini/HaluEval"
+DATASET_SUBSET = "qa_samples"
+DATASET_SPLIT  = "data"
+
+OUTPUT_PATH     = _p("data", "consistency_samples.jsonl")
 
 # How many independent completions to sample per question.
 # More samples → cleaner consistency labels, but slower.
@@ -64,7 +85,7 @@ SAMPLE_NUM      = 10
 MAX_SAMPLES     = 1000
 
 # Generation parameters
-MAX_NEW_TOKENS  = 50
+MAX_NEW_TOKENS  = 100  # HaluEval answers are longer than TriviaQA short-facts
 TEMPERATURE     = 1.0
 TOP_P           = 0.9
 TOP_K           = 50
@@ -86,16 +107,16 @@ JUDGE_BATCH_SIZE = 20
 # Step 2 — Feature Extraction
 # ──────────────────────────────────────────────────────────────
 
-ANSWER_TOKENS_PATH  = "data/answer_tokens.jsonl"
-ACTIVATIONS_DIR     = "data/activations"
+ANSWER_TOKENS_PATH  = _p("data", "answer_tokens.jsonl")
+ACTIVATIONS_DIR     = _p("data", "activations")
 CETT_METHOD         = "mean"   # "mean" | "max"
 
 # ──────────────────────────────────────────────────────────────
 # Step 3 — Probe Training
 # ──────────────────────────────────────────────────────────────
 
-TRAIN_QIDS_PATH     = "data/train_qids.json"
-DETECTOR_PATH       = "models/detector.pt"
+TRAIN_QIDS_PATH     = _p("data", "train_qids.json")
+DETECTOR_PATH       = _p("models", "detector.pt")
 
 # "l1" → sparse model, identifies interpretable H-Neurons
 # "l2" → dense model, typically higher accuracy
@@ -127,9 +148,3 @@ REFLECTION_THRESHOLD = 0.3
 # ──────────────────────────────────────────────────────────────
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-DTYPE_MAP = {
-    "float16":  torch.float16,
-    "bfloat16": torch.bfloat16,
-    "float32":  torch.float32,
-}

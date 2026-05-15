@@ -48,7 +48,7 @@ class HFSampler:
         print(f"Loading model ({config.DTYPE}) ...")
         self.model = AutoModelForCausalLM.from_pretrained(
             config.MODEL_PATH,
-            torch_dtype=config.DTYPE_MAP[config.DTYPE],
+            dtype=config.DTYPE_MAP[config.DTYPE],
             device_map="auto",
             trust_remote_code=True,
         )
@@ -99,9 +99,9 @@ class ConsistencySampler:
     """
     Full data-collection pipeline.
 
-    For each TriviaQA question:
+    For each HaluEval QA question:
       1. Sample SAMPLE_NUM responses from the LLM.
-      2. Judge each response (rule-based or Gemini LLM judge).
+      2. Judge each response using Gemini (or rule-based fallback).
       3. Append the result to OUTPUT_PATH as newline-delimited JSON.
 
     Already-processed qids are skipped automatically, so interrupted
@@ -125,17 +125,21 @@ class ConsistencySampler:
     def process_data(self) -> None:
         from datasets import load_dataset
 
-        print("Loading TriviaQA ...")
-        ds = load_dataset("trivia_qa", "rc.nocontext", split="train")
+        print(f"Loading HaluEval ({config.DATASET_SUBSET}) ...")
+        ds = load_dataset(config.DATASET_NAME, config.DATASET_SUBSET, split=config.DATASET_SPLIT)
         if config.MAX_SAMPLES is not None:
             ds = ds.select(range(config.MAX_SAMPLES))
         print(f"Loaded {len(ds)} questions.\n")
 
         processed_qids = load_existing_qids(config.OUTPUT_PATH)
+        already_done   = len(processed_qids)
+        if already_done:
+            print(f"Resume: {already_done} questions already written to "
+                  f"{config.OUTPUT_PATH} — skipping those.")
         os.makedirs(os.path.dirname(config.OUTPUT_PATH) or ".", exist_ok=True)
 
         suffix  = "Respond with the answer only, without any explanation."
-        counts  = {"correct": 0, "wrong": 0}
+        counts  = {"written": 0, "true": 0, "false": 0, "error": 0}
         buffer: list = []
 
         def flush(buf: list) -> None:
@@ -159,7 +163,8 @@ class ConsistencySampler:
                                 "buf_idx":  bi,
                                 "response": resp,
                                 "question": entry["question"],
-                                "answers":  entry["raw_aliases"],
+                                # Gemini sees a readable string, not a Python list repr
+                                "answers":  ", ".join(entry["raw_aliases"]),
                             })
 
                 # Call LLM judge in chunks
@@ -171,12 +176,13 @@ class ConsistencySampler:
                             cache_map[item["buf_idx"]][item["response"]] = verdict
 
                 for bi, entry in enumerate(buf):
-                    judges     = [cache_map[bi].get(r, "error") for r in entry["responses"]]
-                    true_count = judges.count("true")
-                    if true_count == config.SAMPLE_NUM:
-                        counts["correct"] += 1
-                    elif true_count == 0:
-                        counts["wrong"] += 1
+                    judges = [cache_map[bi].get(r, "error") for r in entry["responses"]]
+                    counts["true"]  += judges.count("true")
+                    counts["false"] += judges.count("false")
+                    counts["error"] += sum(
+                        1 for j in judges if j not in ("true", "false")
+                    )
+                    counts["written"] += 1
 
                     record = {
                         entry["qid"]: {
@@ -190,30 +196,40 @@ class ConsistencySampler:
                     processed_qids.add(entry["qid"])
 
         with tqdm(total=len(ds), desc="Processing questions") as pbar:
-            for item in ds:
+            for idx, item in enumerate(ds):
                 pbar.update(1)
-                qid = str(item.get("question_id", ""))
+                qid = str(idx)
                 if qid in processed_qids:
                     continue
 
                 question = item.get("question", "").strip()
-                if not question or "answer" not in item:
+                if not question:
                     continue
 
-                raw_aliases: List[str] = []
-                for col in ("aliases", "normalized_aliases"):
-                    val = item["answer"].get(col)
-                    if val:
-                        if isinstance(val, list):
-                            raw_aliases.extend(val)
-                        else:
-                            raw_aliases.append(str(val))
-
-                norm_gts = [normalize_answer(a) for a in set(raw_aliases) if a]
-                if not norm_gts:
+                # HaluEval qa_samples schema:
+                #   knowledge  — background context
+                #   question   — the question
+                #   answer     — correct answer
+                #   hallucination — a hallucinated answer (unused here)
+                right_answer = item.get("answer", "").strip()
+                if not right_answer:
                     continue
 
-                messages = [{"role": "user", "content": f"{question} {suffix}"}]
+                knowledge = item.get("knowledge", "").strip()
+
+                raw_aliases: List[str] = [right_answer]
+                norm_gts = [normalize_answer(right_answer)]
+
+                # Include knowledge context so LLaMA has the same info
+                if knowledge:
+                    user_content = (
+                        f"Context: {knowledge}\n\n"
+                        f"Question: {question} {suffix}"
+                    )
+                else:
+                    user_content = f"{question} {suffix}"
+
+                messages = [{"role": "user", "content": user_content}]
                 try:
                     responses = self.sampler.sample(messages, n=config.SAMPLE_NUM)
                 except Exception as e:
@@ -225,7 +241,7 @@ class ConsistencySampler:
 
                 buffer.append({
                     "qid":       qid,
-                    "question":  f"{question} {suffix}",
+                    "question":  user_content,
                     "responses": responses,
                     "raw_aliases": raw_aliases,
                     "norm_gts":  norm_gts,
@@ -235,13 +251,29 @@ class ConsistencySampler:
                     flush(buffer)
                     buffer.clear()
                     tqdm.write(
-                        f"  Stats → all-correct: {counts['correct']}, "
-                        f"all-wrong: {counts['wrong']}"
+                        f"  Written: {counts['written']} | "
+                        f"true: {counts['true']} | "
+                        f"false: {counts['false']} | "
+                        f"error/uncertain: {counts['error']}"
                     )
 
             flush(buffer)
 
-        print(f"\nDone.  all-correct: {counts['correct']},  all-incorrect: {counts['wrong']}")
+        if counts["written"] == 0 and already_done:
+            print(f"\nAll {already_done} questions were already processed — nothing new to write.")
+            print(f"Delete or rename {config.OUTPUT_PATH} to reprocess from scratch.")
+        else:
+            t = counts['true']
+            f = counts['false']
+            e = counts['error']
+            total = t + f + e or 1
+            print(
+                f"\nDone.  Records written: {counts['written']}\n"
+                f"  Judge breakdown — "
+                f"true: {t} ({100*t//total}%) | "
+                f"false: {f} ({100*f//total}%) | "
+                f"error/uncertain: {e} ({100*e//total}%)"
+            )
 
     # ------------------------------------------------------------------
 

@@ -5,9 +5,30 @@ GeminiJudge sends batches of (question, response, ground-truth answers) to
 the Gemini API and returns "true"/"false" verdicts.
 """
 
+import os
 import re
+import ssl
 import time
 from typing import List, Optional
+
+# ── SSL bypass (safe on corporate/cloud networks that intercept TLS) ──────────
+# Set DISABLE_SSL_VERIFY=1 in the environment to enable.
+if os.getenv("DISABLE_SSL_VERIFY", "0") == "1":
+    try:
+        import urllib3
+        import httpx
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        _orig_init = httpx.Client.__init__
+        def _patched_init(self, *args, **kwargs):
+            kwargs["verify"] = False
+            _orig_init(self, *args, **kwargs)
+        httpx.Client.__init__ = _patched_init
+        ssl._create_default_https_context = ssl._create_unverified_context
+        os.environ["PYTHONHTTPSVERIFY"] = "0"
+        print("[judge] SSL verification disabled (DISABLE_SSL_VERIFY=1)")
+    except ImportError:
+        pass
+# ───────────────────────────────────────────────────────────────
 
 
 class GeminiJudge:
@@ -97,6 +118,9 @@ class GeminiJudge:
                 verdicts = self._parse(raw.strip(), len(items))
                 if verdicts is not None:
                     return verdicts
+                else:
+                    print(f"  [judge] attempt {attempt + 1}: could not parse "
+                          f"response ({len(items)} expected), got: {raw.strip()[:120]!r}")
 
             except Exception as e:
                 wait = self._retry_delay(e, attempt)
