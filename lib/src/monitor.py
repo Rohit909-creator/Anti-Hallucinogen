@@ -138,7 +138,7 @@ class HallucinationMonitor:
             for idx, act in extractor.activations.items()
         }
 
-        feat = compute_cett(sliced, method="mean").unsqueeze(0).to(config.DEVICE)
+        feat = compute_cett(sliced, method=config.CETT_METHOD).unsqueeze(0).to(config.DEVICE)
         self.probe.eval()
         return torch.sigmoid(self.probe(feat)).item()
 

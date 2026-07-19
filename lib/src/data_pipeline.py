@@ -217,7 +217,7 @@ class ConsistencySampler:
 
                 knowledge = item.get("knowledge", "").strip()
 
-                raw_aliases: List[str] = [right_answer]
+                raw_aliases: List[str] = [right_answer]I
                 norm_gts = [normalize_answer(right_answer)]
 
                 # Include knowledge context so LLaMA has the same info
