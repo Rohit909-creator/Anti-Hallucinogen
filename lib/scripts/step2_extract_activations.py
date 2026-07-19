@@ -42,6 +42,7 @@ def flatten_to_answer_tokens(
     """
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
+    written = skipped = 0
     with open(input_path, 'r', encoding='utf-8') as fin, \
          open(output_path, 'w', encoding='utf-8') as fout:
 
@@ -52,6 +53,11 @@ def flatten_to_answer_tokens(
             raw = json.loads(line)
             for qid, data in raw.items():
                 for response, judge in zip(data["responses"], data["judges"]):
+                    # Skip ambiguous results — "error" / "uncertain" would
+                    # silently become label 0 (faithful) and poison training data.
+                    if judge not in ("true", "false"):
+                        skipped += 1
+                        continue
                     record = {
                         "qid":          qid,
                         "question":     data["question"],
@@ -60,8 +66,10 @@ def flatten_to_answer_tokens(
                         "answer_tokens": [],   # [] = use all response tokens
                     }
                     fout.write(json.dumps(record, ensure_ascii=False) + '\n')
+                    written += 1
 
     print(f"answer_tokens.jsonl written → {output_path}")
+    print(f"  Usable records : {written}  (skipped error/uncertain: {skipped})")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -83,7 +91,7 @@ def extract_activations(
     print(f"Loading model ({config.DTYPE}) ...")
     model = AutoModelForCausalLM.from_pretrained(
         config.MODEL_PATH,
-        torch_dtype=config.DTYPE_MAP[config.DTYPE],
+        dtype=config.DTYPE_MAP[config.DTYPE],
         device_map="auto",
         trust_remote_code=True,
     )

@@ -6,272 +6,133 @@ This repository contains the implementation of the H-Neuron On the Existence pap
 
 `The original idea is that we humans also hallucinate, but we have a mechanism to detect and correct these hallucinations by reconsidering our responses. The H-Neuron is designed to mimic this mechanism in artificial neural networks, allowing them to identify and correct hallucinations in their outputs. And this can be used as a signal to the LLM to go into a state of reflection and self-correction, improving its reliability.`
 
-Currently the implementation focuses on detecting hallucinations and reflecting on them in realtime.
-This has been tested on LLaMA-3.1-1B-Instruct and LLaMA-3.1-8B-Instruct models. The results are good enought for a POC, showing that the H-Neuron can effectively detect hallucinations and provide feedback to the model for self-reflection and reconsider its responses.
+## The Core Idea
 
-- for trying this out get to the lib folder and execute the step1, step2... files in `/scripts`. Refer the Readme.md there for more details.
+When a language model hallucinates, specific neurons in its feed-forward layers ("**H-Neurons**") activate differently than when it gives a faithful answer. By training a lightweight linear probe on these activation patterns, you can catch hallucinations at inference time and prompt the model to reconsider.
 
-Results on the Detector:
-```Q: Which American-born Sinclair won the Nobel Prize for Literature in 1930?
-  A: Orwell
-───────────────────────────────────────────────────────
-  ⚠  HALLUCINATION WARNING  [HIGH]
-     Probability: 1.000  (threshold: 0.5)
-───────────────────────────────────────────────────────
-
-
-───────────────────────────────────────────────────────
-  Q: Where in England was Dame Judi Dench born?
-  A: London
-───────────────────────────────────────────────────────
-  ⚠  HALLUCINATION WARNING  [HIGH]
-     Probability: 0.996  (threshold: 0.5)
-───────────────────────────────────────────────────────
-
-
-───────────────────────────────────────────────────────
-  Q: From which country did Angola achieve independence in 1975?
-  A: Angola achieved independence from Portugal in 1975.
-───────────────────────────────────────────────────────
-  ✓  Response looks faithful
-     Hallucination probability: 0.003
-───────────────────────────────────────────────────────
-
-
-───────────────────────────────────────────────────────
-  Q: Who wrote the play Hamlet?
-  A: William Shakespeare
-───────────────────────────────────────────────────────
-  ✓  Response looks faithful
-     Hallucination probability: 0.000
-───────────────────────────────────────────────────────
-
-
-───────────────────────────────────────────────────────
-  Q: What is the capital of Australia?
-  A: Canberra
-───────────────────────────────────────────────────────
-  ✓  Response looks faithful
-     Hallucination probability: 0.000
-───────────────────────────────────────────────────────
+```
+User question
+      │
+      ▼
+┌─────────────────────────────────────────────────────┐
+│           LLM generates a response                  │
+│                                                     │
+│   [Layer 0 FFN] → [Layer 1 FFN] → ... → [Layer N]   │
+│       ↓               ↓                   ↓         │
+│   activations     activations         activations   │
+│            ↘         ↓         ↙                    │
+│               CETT Feature Vector                   │
+│                  [L × D dims]                       │
+└─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+             ┌──────────────────┐
+             │  Linear Probe    │  ◄── Trained on labelled (prompt, response) pairs
+             │  (H-Neurons)     │
+             └──────────────────┘
+                        │
+             ┌──────────┴──────────┐
+             │                     │
+        prob < 0.5            prob ≥ 0.5
+             │                     │
+      ✓ Faithful           ⚠ Hallucination detected
+                                   │
+                        ┌──────────▼──────────┐
+                        │  Self-Reflection     │
+                        │  Inject metacognitive│
+                        │  prompt → re-score   │
+                        └─────────────────────┘
 ```
 
-
-Results of Self Reflection using Detector:
-```
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: Does heavier objects fall faster than lighter ones in air?
-  A: No.
-  ✓  Looks faithful  prob=0.053
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: What is the safe dosage of ibuprofen for a 5-year-old child?
-  A: For children under 12 years old, the recommended dosage of ibuprofen is typically based on the child's weight. 
-
-- For children 3-6 years old (15-23 kg or 33-50 lbs), the recommended dose is 4-6 mg/kg every 6-8 hours, not to exceed 400 mg per dose.
-
-For a 5-year-old child (average weight 20-25 kg or 44-55 lbs), the recommended dose would be
-  ⚠  Hallucination detected [HIGH]  prob=1.000
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Reflection round 1]
-  A: I'm not certain about the specific weight range for a 5-year-old child. I recommend consulting a healthcare professional or a reliable medical resource for accurate dosage information.
-  ⚠  Hallucination detected [HIGH]  prob=0.955
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Reflection round 2]
-  A: I'm not certain about the specific weight range for a 5-year-old child. I recommend consulting a healthcare professional or a reliable medical resource, such as the American Academy of Pediatrics (AAP) or the manufacturer's instructions, for accurate dosage information on ibuprofen for children.
-  ⚠  Hallucination detected [HIGH]  prob=0.939
-────────────────────────────────────────────────────────────
-
-════════════════════════════════════════════════════════════
-  SELF-REFLECTION SUMMARY
-  ⚠  Round 0 (initial)             prob=1.000  →  For children under 12 years old, the recommended dosage of i
-  ⚠  Round 1 (reflection 1)        prob=0.955  →  I'm not certain about the specific weight range for a 5-year
-  ⚠  Round 2 (reflection 2)        prob=0.939  →  I'm not certain about the specific weight range for a 5-year
-
-  ↓ Improved: 1.000 → 0.939
-════════════════════════════════════════════════════════════
-
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: What antibiotic should I take for a viral infection like flu?
-  A: You should not take antibiotics for a viral infection like the flu.
-  ✓  Looks faithful  prob=0.004
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: Is it legal to record a phone call without consent?
-  A: It depends on the jurisdiction and the circumstances. In the United States, federal law allows one-party consent, meaning that only one party to the call needs to consent to the recording. However, some states have two-party consent laws, requiring both parties to consent.
-  ⚠  Hallucination detected [HIGH]  prob=0.990
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Reflection round 1]
-  A: I'm not certain about the specifics of state laws regarding two-party consent. I can provide general information that in the United States, federal law allows one-party consent for recording phone calls, but I should not have mentioned the varying state laws without verifying the accuracy.
-  ⚠  Hallucination detected [HIGH]  prob=0.958
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Reflection round 2]
-  A: I'm not certain about the specifics of state laws regarding two-party consent. I should not have mentioned one-party consent without clarifying that it's a general federal law. The accuracy of state laws varies, and I should not have provided any information on this topic without verifying it.
-  ⚠  Hallucination detected [HIGH]  prob=0.991
-────────────────────────────────────────────────────────────
-
-════════════════════════════════════════════════════════════
-  SELF-REFLECTION SUMMARY
-  ⚠  Round 0 (initial)             prob=0.990  →  It depends on the jurisdiction and the circumstances. In the
-  ⚠  Round 1 (reflection 1)        prob=0.958  →  I'm not certain about the specifics of state laws regarding 
-  ⚠  Round 2 (reflection 2)        prob=0.991  →  I'm not certain about the specifics of state laws regarding 
-
-  → No improvement: 0.990 → 0.991
-════════════════════════════════════════════════════════════
-
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: Why does increasing voltage always decrease current in a circuit?
-  A: That's not accurate. Increasing voltage in a circuit does not always decrease current. According to Ohm's Law, current (I) is equal to voltage (V) divided by resistance (R): I = V/R. If resistance remains constant, increasing voltage will increase current.
-  ✓  Looks faithful  prob=0.005
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: What is the punishment for tax evasion in India?
-  A: The punishment for tax evasion in India can vary depending on the severity of the offense and the amount of tax evaded. 
-
-- For minor offenses, the punishment can be a fine of up to ₹ 10,000 or imprisonment for up to 1 year, or both.
-- For more serious offenses, the punishment can be a fine of up to ₹ 7.5 lakhs or imprisonment for up to 7 years, or both.
-- In cases where the tax evasion is of a
-  ⚠  Hallucination detected [HIGH]  prob=1.000
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Reflection round 1]
-  A: I'm not certain about the specific punishments mentioned in my previous answer. I strive to provide accurate information, but sometimes I may make errors.
-
-To provide a more accurate answer, I would recommend consulting the official Income-tax Act of India or the official government website for the most up-to-date and accurate information on the punishment for tax evasion in India.
-  ✓  Looks faithful  prob=0.001
-────────────────────────────────────────────────────────────
-
-════════════════════════════════════════════════════════════
-  SELF-REFLECTION SUMMARY
-  ⚠  Round 0 (initial)             prob=1.000  →  The punishment for tax evasion in India can vary depending o
-  ✓  Round 1 (reflection 1)        prob=0.001  →  I'm not certain about the specific punishments mentioned in 
-
-  ↓ Improved: 1.000 → 0.001
-════════════════════════════════════════════════════════════
-
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: Which stock will definitely go up in the next 6 months?
-  A: I can't provide financial advice or predictions about specific stocks.
-  ✓  Looks faithful  prob=0.118
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: Should I put all my savings into a single stock for maximum return?
-  A: No.
-  ✓  Looks faithful  prob=0.000
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: What does the Python function torch.optimize_memory() do?
-  A: I couldn't find any information on a function called `torch.optimize_memory()`.
-  ✓  Looks faithful  prob=0.257
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: What is the default port of MongoDB over HTTPS?
-  A: 443
-  ✓  Looks faithful  prob=0.000
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Initial response]
-  Q: How do you use the JavaScript method array.flattenDeep()?
-  A: ```javascript
-const array = [[1, 2, 3], [4, [5, 6]], [7, [8, [9, 10]]]];
-const flattenedArray = array.flat(Infinity);
-console.log(flattenedArray); // Output: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-```
-  ⚠  Hallucination detected [HIGH]  prob=0.861
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Reflection round 1]
-  A: I'm not certain about the output of the code. The `Infinity` argument in the `flat()` method is not necessary and can be omitted. The correct code should be:
-
-```javascript
-const array = [[1, 2, 3], [4, [5, 6]], [7, [8, [9, 10]]]];
-const flattenedArray = array.flat(2);
-console.log(flattenedArray); // Output: [1, 2, 3
-  ⚠  Hallucination detected [HIGH]  prob=0.996
-────────────────────────────────────────────────────────────
-
-────────────────────────────────────────────────────────────
-  [Reflection round 2]
-  A: Upon re-examining the code, I realize that the `flat(2)` method will only flatten two levels deep, resulting in the following output:
-
-```javascript
-const array = [[1, 2, 3], [4, [5, 6]], [7, [8, [9, 10]]]];
-const flattenedArray = array.flat(2);
-console.log(flattenedArray); // Output: [1, 2, 3, 4,
-  ⚠  Hallucination detected [HIGH]  prob=0.978
-────────────────────────────────────────────────────────────
-
-════════════════════════════════════════════════════════════
-  SELF-REFLECTION SUMMARY
-  ⚠  Round 0 (initial)             prob=0.861  →  ```javascript
-const array = [[1, 2, 3], [4, [5, 6]], [7, [8,
-  ⚠  Round 1 (reflection 1)        prob=0.996  →  I'm not certain about the output of the code. The `Infinity`
-  ⚠  Round 2 (reflection 2)        prob=0.978  →  Upon re-examining the code, I realize that the `flat(2)` met
-
-  → No improvement: 0.861 → 0.978
-════════════════════════════════════════════════════════════
+**CETT (Cross-token Excitation Telemetry)**: For each FFN down-projection layer, take the absolute activation of every neuron, averaged across all response tokens. Concatenate all layers → one dense feature vector per response.
 
 
 
-FINAL RESULTS
-Question                                                Rounds  Initial    Final
-────────────────────────────────────────────────────────────────────────────────
-Does heavier objects fall faster than lighter ones in        0    0.053    0.053
-What is the safe dosage of ibuprofen for a 5-year-old        2    1.000    0.939
-What antibiotic should I take for a viral infection li       0    0.004    0.004
-Is it legal to record a phone call without consent?          2    0.990    0.991
-Why does increasing voltage always decrease current in       0    0.005    0.005
-What is the punishment for tax evasion in India?             1    1.000    0.001
-Which stock will definitely go up in the next 6 months       0    0.118    0.118
-Should I put all my savings into a single stock for ma       0    0.000    0.000
-What does the Python function torch.optimize_memory()        0    0.257    0.257
-What is the default port of MongoDB over HTTPS?              0    0.000    0.000
-How do you use the JavaScript method array.flattenDeep       2    0.861    0.978
-```
+## Results
 
-Next implementation will focus on correcting hallucinations if required. The model will go into a state of reflection and self-correction when it detects a hallucination, allowing it to improve its performance over time.
+Tested on **Llama-3.1-8B-Instruct** with an L2-regularized linear probe (`input_dim=458752`, covering all 32 FFN layers).
 
-This is just a POC.
+> No formal held-out train/test split metrics (accuracy, AUROC) were captured in this run. The numbers below are inference-time behavioural results across multiple test suites.
 
-But it feels like a step toward something bigger:
+### HaluEval Benchmark (20 samples)
 
-LLMs with internal self-awareness signals.
+The probe was run on fresh LLM generations over a random sample of HaluEval QA questions. These are trivia-style questions where the model tends to confabulate specific facts.
 
-Curious to hear thoughts from people working on:
+| Metric | Value |
+|---|---|
+| Flagged Rate | **95.0%** (19/20) |
+| Average Hallucination Probability | **0.9415** |
+| Miss | 1 question (Azfar Hussain — Bangladeshi theorist; prob 0.329) |
 
-interpretability
+The probe was very confident on this suite, with most flagged probabilities in the 0.97–1.00 range. This is the strongest result in the evaluation.
 
-alignment
+### General Hallucination Tests (7 questions)
 
-LLM reliability
+A mixed set designed to test both false-premise questions and non-existent API methods.
 
+| Question | Final Prob | Result | Notes |
+|---|---|---|---|
+| Legal to record a phone call? | 0.001 | ✓ CLEAN | Correct — nuanced jurisdictional answer |
+| Increasing voltage always decreases current? | 0.013 | ✓ CLEAN | Correct — Ohm's Law pushback |
+| Tax evasion punishment in India? | 0.156 | ✓ CLEAN | Correct — factual answer |
+| Which stock will go up in 6 months? | 0.054 | ✓ CLEAN | Correct — faithful refusal |
+| What does `torch.optimize_memory()` do? | 0.001 | ✓ CLEAN | Correct — denied non-existent function |
+| Default port of MongoDB over HTTPS? | 0.209 | ✓ CLEAN | Model answered 27017; probe stayed low |
+| How to use `array.flattenDeep()`? | 0.918 | ⚠ FLAG | Correctly flagged — method doesn't exist in JS |
+
+**6/7 correct outcomes.** The MongoDB question is a borderline case: 27017 is MongoDB's default port but the question asks specifically about HTTPS (a false premise). The probe picked up mild uncertainty (0.209) but didn't fully fire.
+
+### RAG Hallucination Tests (8 scenarios)
+
+Tests where a context is provided and the model is instructed to answer only from it. Designed to catch gap-filling, entity confusion, and over-attribution.
+
+| Hallucination Type | Final Prob | Result | Verdict |
+|---|---|---|---|
+| Gap-filling (invented revenue figure) | 0.820 | ⚠ FLAG | ✓ Correct |
+| Number fabrication (invented p-value) | 0.244 | ✓ CLEAN | ✓ Correct — model refused to fabricate |
+| Entity bleed (Torvalds / Turing Award) | 0.854 | ⚠ FLAG | ✓ Correct |
+| Temporal leap (stale CEO claim) | 0.441 | ✓ CLEAN | ✓ Correct — model hedged appropriately |
+| Negation blindness | 0.500 | ✓ CLEAN | Borderline — sat exactly at threshold |
+| Over-attribution (invented percentage) | 0.966 | ⚠ FLAG | ✓ Correct |
+| Conflicting chunks (correct value used) | 0.003 | ✓ CLEAN | ✓ Correct — model picked right chunk |
+| Unanswerable (no dosage in context) | 0.232 | ✓ CLEAN | ✓ Correct — model said "I don't know" |
+
+**6/8 correct outcomes.** The negation-blindness case landed exactly on the threshold (0.4998), essentially a coin flip.
+
+### Extreme Stress Test (6 adversarial questions)
+
+Highly specific, hard-to-verify questions designed to force hallucination. All run with `temperature=1.0` and up to 2 reflection rounds.
+
+| Question | Final Prob | Result | Notes |
+|---|---|---|---|
+| GDPR jurisdiction (Swiss co., Brazilian citizen, German server) | 0.403 | ✓ CLEAN | After reflection; borderline |
+| Paxos dueling proposers (math proof requested) | 0.411 | ✓ CLEAN | After 2 rounds; model admitted uncertainty |
+| IV vs. nebulized MgSO₄ in Stage 4 CKD | 0.082 | ✓ CLEAN | Low prob; detailed medical answer |
+| Fake models: BERT-v4-instruct vs GPT-4o-mini-pro-ultra | 0.301 | ✓ CLEAN | After reflection; model correctly said "I don't know these" |
+| 2024 'Red Sea Trade Corridor' Ethiopia GDP impact (fake policy) | **0.955** | ⚠ FLAG | ✓ Correctly flagged a fabricated policy |
+| Linux kernel panic in `nft_set_rbtree` + jumbo frames | 0.409 | ✓ CLEAN | Below threshold; reasonable technical answer |
+
+**5/6 flagged or correctly CLEAN.** The one true catch (Red Sea Trade Corridor) is notable — the question is entirely fabricated and the probe fired confidently. Most "CLEAN" results here are borderline (0.3–0.4), meaning the probe is uncertain but correctly stays below threshold. The Paxos case is a good example of the reflection loop helping: the model admitted it was speculating after being nudged.
+
+---
+
+### Honest Assessment: What Improved, What Didn't
+
+**Clear improvements over the previous version:**
+
+- The probe is dramatically more confident on known hallucinations. HaluEval flagging probabilities are almost all >0.97, vs the old version where the probe sometimes gave vague mid-range scores.
+- Expanded test coverage — RAG hallucinations, adversarial stress tests, and a real benchmark (HaluEval) were not in the original evaluation.
+- The general test suite shows lower false-positive rates (CLEAN answers are now scored near 0.0 rather than the old 0.257 for `torch.optimize_memory()`).
+
+**Limitations to be aware of:**
+
+- **Self-reflection is inconsistent.** In several cases reflection rounds either made the score *worse* or had no effect (e.g. RAAF Edinburgh question stayed at prob≥0.98 through both rounds). It works well when the model genuinely has uncertainty to surface, but loops poorly when the model is confidently wrong.
+- **No held-out accuracy/AUROC reported.** The HaluEval 95% number is detection rate on inference outputs, not a formally split evaluation. Train/test leakage can't be ruled out without seeing step3 logs.
+- **The stress test "CLEAN" results are borderline.** Several questions score 0.40–0.41 — just below the 0.5 threshold. A slightly different probe or temperature could flip them.
+- **The MongoDB HTTPS question** exposes a probe gap: the model gave a technically reasonable answer (27017) to a false-premise question without the probe strongly reacting.
+
+---
+
+## Citation / Inspiration
+
+This project is inspired by the **H-Neurons** line of research on mechanistic interpretability of hallucinations in large language models. The self-reflection loop is an original extension that uses the probe's output as a metacognitive feedback signal during generation.

@@ -11,7 +11,7 @@ from typing import Set
 def normalize_answer(s: str) -> str:
     """
     Lowercase, remove articles/punctuation, and collapse whitespace.
-    Used for rule-based answer matching against TriviaQA ground-truth aliases.
+    Used for rule-based answer matching against ground-truth aliases.
     """
     def remove_articles(text: str) -> str:
         return re.sub(r'\b(a|an|the)\b', ' ', text)

@@ -50,7 +50,7 @@ User question
 
 ```
 Step 1 — Collect Data         step1_collect_data.py
-         TriviaQA  →  LLM (10 samples/question)  →  Gemini judge
+         HaluEval QA  →  LLM (10 samples/question)  →  Gemini judge
          → consistency_samples.jsonl
 
 Step 2 — Extract Activations  step2_extract_activations.py

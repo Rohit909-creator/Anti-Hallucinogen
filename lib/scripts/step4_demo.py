@@ -31,7 +31,7 @@ if tokenizer.pad_token is None:
 print(f"Loading model ({config.DTYPE}) ...")
 llm = AutoModelForCausalLM.from_pretrained(
     config.MODEL_PATH,
-    torch_dtype=config.DTYPE_MAP[config.DTYPE],
+    dtype=config.DTYPE_MAP[config.DTYPE],
     device_map="auto",
     trust_remote_code=True,
 )
